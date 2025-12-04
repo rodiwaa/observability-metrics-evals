@@ -1,8 +1,17 @@
 from dotenv import load_dotenv
 import os
-from typing import Literal
+from typing import Any, Literal, Sequence
 from opik.integrations.langchain import OpikTracer
-from queries import QUERIES
+from queries import QUERIES, EXPECTED_ANSWERS
+from opik.evaluation.metrics import (
+    LLMJuriesJudge,
+    Hallucination,
+    ComplianceRiskJudge,
+    DialogueHelpfulnessJudge,
+    ContextPrecision,
+    ContextRecall,
+)
+from opik import opik_context
 
 print("setting env vars")
 load_dotenv()
@@ -15,6 +24,14 @@ print(f"LANGSMITH_TRACING: {os.getenv('LANGSMITH_TRACING')}")
 print(f"LANGSMITH_PROJECT: {os.getenv('LANGSMITH_PROJECT')}")
 print(f"OPIK_PROJECT_NAME: {os.getenv('OPIK_PROJECT_NAME')}")
 print(f"OPIK_BASE_URL: {os.getenv('OPIK_BASE_URL')}")
+
+# Instantiate Opik metrics once so every evaluation is tracked under the configured project.
+context_precision_metric = ContextPrecision(project_name=os.getenv("OPIK_PROJECT_NAME"))
+context_recall_metric = ContextRecall(project_name=os.getenv("OPIK_PROJECT_NAME"))
+RAG_METRICS = {
+    "context_precision": context_precision_metric,
+    "context_recall": context_recall_metric,
+}
 
 from langchain_community.document_loaders import WebBaseLoader
 
@@ -133,7 +150,7 @@ def grade_documents(
     else:
         return "rewrite_question"
     
-from langchain_core.messages import convert_to_messages
+from langchain_core.messages import convert_to_messages, ToolMessage
 
 input = {
     "messages": convert_to_messages(
@@ -250,6 +267,43 @@ def generate_answer(state: MessagesState):
     context = state["messages"][-1].content
     prompt = GENERATE_PROMPT.format(question=question, context=context)
     response = response_model.invoke([{"role": "user", "content": prompt}])
+    
+    # FIXME: is trace breaking my code?
+    # TODO: issue is that get_current_trace_data will be None since this fn is not traced yet.
+    # FIXME: call this function via langgraph node only, not outside LG so this LG node is traced properly.
+    # update trace feedback metrics after #414 only. to capture all grapgh interactions w LLM.
+    # move it all to a fn, duh
+    trace = opik_context.get_current_trace_data()
+    print(f"trace {trace}")
+
+    jury = LLMJuriesJudge(
+        judges=[
+            Hallucination(model="gpt-4o-mini"),
+            ComplianceRiskJudge(),
+            DialogueHelpfulnessJudge(),
+        ]
+    )
+    scores = jury.score(
+        input=question,
+        output=response.content,
+    )
+
+    # for name, metric in scores:
+    #     print("inside metric jury")
+    #     print(name, metric)
+
+    # print(f"scores - ${scores}")
+    # for score in score.items():
+    #     print(score)
+    #     trace.feedback_scores(
+    #         {
+    #             "category_name": "Test",
+    #             "name": "Test",
+    #             "reason": "Test",
+    #             "value": 1,
+    #         }
+    #     )
+    
     return {"messages": [response]}
 
 input = {
@@ -281,6 +335,25 @@ input = {
 
 response = generate_answer(input)
 response["messages"][-1].pretty_print()
+
+# # my own code
+# print(f"SCORING TEST")
+# jury = LLMJuriesJudge(
+#     judges=[
+#         Hallucination(model="gpt-4o-mini"),
+#         ComplianceRiskJudge(),
+#         DialogueHelpfulnessJudge(),
+#     ]
+# )
+
+# score = jury.score(
+#     input = QUERIES['REWARD_HACKING'],
+#     output = response["messages"][-1].pretty_print()
+# )
+
+# # my own code till here...
+
+# print(f"SCORE: ${score}")
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
