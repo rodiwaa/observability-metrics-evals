@@ -1,12 +1,20 @@
 from dotenv import load_dotenv
 import os
 from typing import Literal
+from opik.integrations.langchain import OpikTracer
+from queries import QUERIES
 
 print("setting env vars")
 load_dotenv()
 
+print(QUERIES)
+print(QUERIES['HALLUCINATION'])
+
 # print(os.getenv('OPENAI_API_KEY'))
-print(os.getenv('LANGSMITH_TRACING'))
+print(f"LANGSMITH_TRACING: {os.getenv('LANGSMITH_TRACING')}")
+print(f"LANGSMITH_PROJECT: {os.getenv('LANGSMITH_PROJECT')}")
+print(f"OPIK_PROJECT_NAME: {os.getenv('OPIK_PROJECT_NAME')}")
+print(f"OPIK_BASE_URL: {os.getenv('OPIK_BASE_URL')}")
 
 from langchain_community.document_loaders import WebBaseLoader
 
@@ -73,7 +81,7 @@ input = {
     "messages": [
         {
             "role": "user",
-            "content": "What does Lilian Weng say about types of reward hacking?",
+            "content": "queries.",
         }
     ]
 }
@@ -322,6 +330,11 @@ workflow.add_edge("rewrite_question", "generate_query_or_respond")
 # Compile
 graph = workflow.compile()
 
+opik_tracer = OpikTracer(graph=graph.get_graph(xray=True))
+opik_config = {
+    "callbacks": [opik_tracer]
+}
+
 from IPython.display import Image, display
 
 display(Image(graph.get_graph().draw_mermaid_png()))
@@ -331,10 +344,11 @@ for chunk in graph.stream(
         "messages": [
             {
                 "role": "user",
-                "content": "What does Lilian Weng say about types of reward hacking?",
+                "content": "What does Lilian Weng say about causes of hallucincation?",
             }
         ]
-    }
+    },
+config=opik_config
 ):
     for node, update in chunk.items():
         print("Update from node", node)
