@@ -271,33 +271,119 @@ def generate_answer(state: MessagesState):
     prompt = GENERATE_PROMPT.format(question=question, context=context)
     response = response_model.invoke([{"role": "user", "content": prompt}])
     
-    # FIXME: is trace breaking my code?
-    # TODO: issue is that get_current_trace_data will be None since this fn is not traced yet.
-    # FIXME: call this function via langgraph node only, not outside LG so this LG node is traced properly.
-    # update trace feedback metrics after #414 only. to capture all grapgh interactions w LLM.
-    # move it all to a fn, duh    
-    return {"messages": [response]}
-
-def eval_llm(question: str, response: str):
     trace = opik_context.get_current_trace_data()
-    print(f"trace {trace}")
+    if trace is not None:
+        try:
+            print(f"trace? {trace}")
+            feedback_scores = eval_llm(question, response)
+            opik_context.update_current_trace(feedback_scores=feedback_scores)
+            print(f"trace updated")
+        except Exception as e:
+            print(f'Feedback Score failed: {e}') 
+
+    return {"messages": [response]}
+  
+def eval_llm(question: str, answer: str):
+    print("inside eval_llm")
+    jury = LLMJuriesJudge(
+        judges=[
+            Hallucination(model="gpt-4o-mini"),
+            ComplianceRiskJudge(model="gpt-4o-mini"),
+            DialogueHelpfulnessJudge(model="gpt-4o-mini"),
+        ]
+    )
+
+    score = jury.score(input=question, output=answer)
+    print(f"scores: {score}")
+
+    feedback_scores = []
+
+    # aggregated feedback_score
+    feedback_scores.append(
+        {
+            "category_name": "LLM_Juries",
+            "name": score.name,        # "llm_juries_judge"
+            "reason": score.reason,    # "Averaged 3 judge scores"
+            "value": score.value,      # 0.39...
+        }
+    )
+
+    # per-judge scores
+    judge_scores = (score.metadata or {}).get("judge_scores", {})
+    for judge_name, judge_value in judge_scores.items():
+        feedback_scores.append(
+            {
+                "category_name": "LLM_Juries_Detail",
+                "name": judge_name,            # e.g. "hallucination_metric"
+                "reason": f"Score from {judge_name}",
+                "value": judge_value,          # e.g. 0.4, 1.75e-06, 0.77...
+            }
+        )
+
+    print(f"feedback_scores: {feedback_scores}")
+    return feedback_scores
+  
+  
+def eval_llm2(question: str, response: str):
+    print('inside eval_llm')
+    # trace = opik_context.get_current_trace_data()
+    # print(f"trace {trace}")
 
     jury = LLMJuriesJudge(
         judges=[
             Hallucination(model="gpt-4o-mini"),
-            ComplianceRiskJudge(),
-            DialogueHelpfulnessJudge(),
+            ComplianceRiskJudge(model="gpt-4o-mini"),
+            DialogueHelpfulnessJudge(model="gpt-4o-mini"),
         ]
     )
-    scores = jury.score(
-        input=question,
-        output=response.content,
+    score = jury.score(input=question, output=response.content)
+    print(f'scores: {score}')
+
+    
+
+    feedback_scores = []
+    
+    # output of jury.scores()
+    # ScoreResult(
+    # name='llm_juries_judge', 
+    # value=0.48333333333333334, 
+    # reason='Averaged 3 judge scores', 
+    # metadata={
+    #   'judge_scores': 
+    #     {
+    #       'hallucination_metric': 0.25, 
+    #       'compliance_risk_judge': 0.5,
+    #       'dialogue_helpfulness_judge': 0.7
+    #     }
+    #   },
+    # scoring_failed=False)
+    
+
+    # aggregated feedback_score
+    feedback_scores.append(
+        {
+            "category_name": "LLM_Juries",
+            "name": score.name,          # "llm_juries_judge"
+            "reason": score.reason,      # "Averaged 3 judge scores"
+            "value": score.value,        # 0.33738...
+        }
     )
+    
+    # per item score
+    # judge_scores = (score.metadata or {}).get("judge_scores", {})
+    # for judge_name, judge_value in judge_scores.items():
+    #     feedback_scores.append(
+    #         {
+    #             "category_name": "LLM_Juries_Detail",
+    #             "name": judge_name,       # e.g. "hallucination_metric"
+    #             "reason": f"Score from {judge_name}",
+    #             "value": judge_value,     # e.g. 0.2, 4.24e-06, 0.81...
+    #         }
+    #     )
+    
+    print(f"feedback_scores: {feedback_scores}")
 
-    # for name, metric in scores:
-    #     print("inside metric jury")
-    #     print(name, metric)
-
+    return feedback_scores
     # print(f"scores - ${scores}")
     # for score in score.items():
     #     print(score)
@@ -309,57 +395,6 @@ def eval_llm(question: str, response: str):
     #             "value": 1,
     #         }
     #     )
-    
-
-# input = {
-#     "messages": convert_to_messages(
-#         [
-#             {
-#                 "role": "user",
-#                 "content": "What does Lilian Weng say about types of reward hacking?",
-#             },
-#             {
-#                 "role": "assistant",
-#                 "content": "",
-#                 "tool_calls": [
-#                     {
-#                         "id": "1",
-#                         "name": "retrieve_blog_posts",
-#                         "args": {"query": "types of reward hacking"},
-#                     }
-#                 ],
-#             },
-#             {
-#                 "role": "tool",
-#                 "content": "reward hacking can be categorized into two types: environment or goal misspecification, and reward tampering",
-#                 "tool_call_id": "1",
-#             },
-#         ]
-#     )
-# }
-
-#FIXME: why is this here? example probably?
-# response = generate_answer(input)
-# response["messages"][-1].pretty_print()
-
-# # my own code
-# print(f"SCORING TEST")
-# jury = LLMJuriesJudge(
-#     judges=[
-#         Hallucination(model="gpt-4o-mini"),
-#         ComplianceRiskJudge(),
-#         DialogueHelpfulnessJudge(),
-#     ]
-# )
-
-# score = jury.score(
-#     input = QUERIES['REWARD_HACKING'],
-#     output = response["messages"][-1].pretty_print()
-# )
-
-# # my own code till here...
-
-# print(f"SCORE: ${score}")
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
@@ -374,6 +409,7 @@ def retrieve(state: MessagesState):
         result = retriever_tool.invoke(tool_call["args"])
         tool_messages.append(ToolMessage(content=str(result), tool_call_id=tool_call["id"]))
     return {"messages": tool_messages}
+
 
 workflow = StateGraph(MessagesState)
 
@@ -432,6 +468,7 @@ config=opik_config
 ):
 
     for node, update in chunk.items():
+        print("\n")
         print("Update from node", node)
         update["messages"][-1].pretty_print()
         print("\n\n")
