@@ -18,6 +18,9 @@ load_dotenv()
 
 print(QUERIES)
 print(QUERIES['HALLUCINATION'])
+print(QUERIES['DIFFUSION'])
+
+USER_QUERY = (QUERIES['DIFFUSION'])
 
 # print(os.getenv('OPENAI_API_KEY'))
 print(f"LANGSMITH_TRACING: {os.getenv('LANGSMITH_TRACING')}")
@@ -174,7 +177,7 @@ input = {
         ]
     )
 }
-grade_documents(input)
+# grade_documents(input) #FIXME: not calling outside LG
 
 
 input = {
@@ -203,7 +206,7 @@ input = {
         ]
     )
 }
-grade_documents(input)
+# grade_documents(input) #FIXME: not calling outside LG
 
 from langchain.messages import HumanMessage
 
@@ -248,8 +251,8 @@ input = {
     )
 }
 
-response = rewrite_question(input)
-print(response["messages"][-1].content)
+# response = rewrite_question(input)
+# print(response["messages"][-1].content)
 
 GENERATE_PROMPT = (
     "You are an assistant for question-answering tasks. "
@@ -272,7 +275,10 @@ def generate_answer(state: MessagesState):
     # TODO: issue is that get_current_trace_data will be None since this fn is not traced yet.
     # FIXME: call this function via langgraph node only, not outside LG so this LG node is traced properly.
     # update trace feedback metrics after #414 only. to capture all grapgh interactions w LLM.
-    # move it all to a fn, duh
+    # move it all to a fn, duh    
+    return {"messages": [response]}
+
+def eval_llm(question: str, response: str):
     trace = opik_context.get_current_trace_data()
     print(f"trace {trace}")
 
@@ -304,37 +310,37 @@ def generate_answer(state: MessagesState):
     #         }
     #     )
     
-    return {"messages": [response]}
 
-input = {
-    "messages": convert_to_messages(
-        [
-            {
-                "role": "user",
-                "content": "What does Lilian Weng say about types of reward hacking?",
-            },
-            {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "1",
-                        "name": "retrieve_blog_posts",
-                        "args": {"query": "types of reward hacking"},
-                    }
-                ],
-            },
-            {
-                "role": "tool",
-                "content": "reward hacking can be categorized into two types: environment or goal misspecification, and reward tampering",
-                "tool_call_id": "1",
-            },
-        ]
-    )
-}
+# input = {
+#     "messages": convert_to_messages(
+#         [
+#             {
+#                 "role": "user",
+#                 "content": "What does Lilian Weng say about types of reward hacking?",
+#             },
+#             {
+#                 "role": "assistant",
+#                 "content": "",
+#                 "tool_calls": [
+#                     {
+#                         "id": "1",
+#                         "name": "retrieve_blog_posts",
+#                         "args": {"query": "types of reward hacking"},
+#                     }
+#                 ],
+#             },
+#             {
+#                 "role": "tool",
+#                 "content": "reward hacking can be categorized into two types: environment or goal misspecification, and reward tampering",
+#                 "tool_call_id": "1",
+#             },
+#         ]
+#     )
+# }
 
-response = generate_answer(input)
-response["messages"][-1].pretty_print()
+#FIXME: why is this here? example probably?
+# response = generate_answer(input)
+# response["messages"][-1].pretty_print()
 
 # # my own code
 # print(f"SCORING TEST")
@@ -408,21 +414,23 @@ opik_config = {
     "callbacks": [opik_tracer]
 }
 
-from IPython.display import Image, display
+# FIXME: not needed; can be seen in opik
+# from IPython.display import Image, display
 
-display(Image(graph.get_graph().draw_mermaid_png()))
+# display(Image(graph.get_graph().draw_mermaid_png()))
 
 for chunk in graph.stream(
     {
         "messages": [
             {
                 "role": "user",
-                "content": "What does Lilian Weng say about causes of hallucincation?",
+                "content": USER_QUERY,
             }
         ]
     },
 config=opik_config
 ):
+
     for node, update in chunk.items():
         print("Update from node", node)
         update["messages"][-1].pretty_print()
